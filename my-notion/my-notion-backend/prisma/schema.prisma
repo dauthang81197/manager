@@ -1,0 +1,27 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// spec-1-auth Code Map: model User (id uuid, email, password_hash, google_id nullable,
+// failed_login_attempts int default 0, locked_until timestamp nullable)
+model User {
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  passwordHash        String?   @map("password_hash")
+  googleId            String?   @unique @map("google_id")
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime? @map("locked_until")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@map("users")
+}
