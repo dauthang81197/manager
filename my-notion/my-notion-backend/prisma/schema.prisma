@@ -23,5 +23,41 @@ model User {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
+  pages Page[]
+
   @@map("users")
+}
+
+// spec-2-page-crud-tree Code Map: model Page (id uuid, parentId nullable
+// self-relation `onDelete: Cascade` per spine AD-3, ownerId, title, content
+// jsonb default empty, viewType default "document", viewSchema nullable
+// jsonb, createdAt, updatedAt). content/viewType/viewSchema are created here
+// per the spine ERD but NOT used by this story (story 3/8/9) — avoids a
+// re-migration later.
+model Page {
+  id       String  @id @default(uuid())
+  parentId String? @map("parent_id")
+  parent   Page?   @relation("PageToChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children Page[]  @relation("PageToChildren")
+
+  ownerId String @map("owner_id")
+  owner   User   @relation(fields: [ownerId], references: [id])
+
+  title String
+
+  // AD-2: content is a single Tiptap JSON document; not authored in this
+  // story — new pages get an empty document.
+  content Json @default("{}")
+
+  // AD-7: document | table | kanban | calendar — this story only ever
+  // creates/reads "document"; view_schema stays null.
+  viewType   String @default("document") @map("view_type")
+  viewSchema Json?  @map("view_schema")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([ownerId])
+  @@index([parentId])
+  @@map("pages")
 }

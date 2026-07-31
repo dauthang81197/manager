@@ -21,3 +21,18 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-auth.md`
   summary: Trang đăng ký bỏ qua token trả về từ `register()`, gọi lại `signIn('credentials', ...)` gửi lại mật khẩu để lấy session — dư 1 vòng round-trip.
   evidence: Không sai, chỉ kém tối ưu; không đáng sửa ngay.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-page-crud-tree.md`
+  summary: Toàn bộ cây Trang được refetch lại mỗi khi điều hướng (Sidebar + trang placeholder đều tự fetch riêng, không cache chung).
+  evidence: Chấp nhận được ở quy mô hiện tại; revisit khi đưa TanStack Query vào theo đúng stack đã chọn ở spine.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-page-crud-tree.md`
+  summary: `getBearerToken` (lib/auth.ts) suy ra secureCookie từ header `x-forwarded-proto` nhưng chưa có test tự động nào — đây là lần thứ 2 đúng loại logic proxy/token này không có test (lần 1 ở story 1 đã từng gây bug thật, chỉ bắt được qua smoke test tay).
+  evidence: Frontend vẫn chưa có framework test nào; nên ưu tiên dựng test framework sớm hơn dự kiến vì lỗi loại này đã lặp lại 2 lần.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-page-crud-tree.md`
+  summary: Route Handler proxy (`app/api/pages/**`) chưa có test nào chạy qua thật logic gắn Bearer token / 401 / 204 no-body.
+  evidence: Cùng nguyên nhân — frontend chưa có test infra; test backend hiện tại mock Prisma, không chạm tới tầng proxy.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-page-crud-tree.md`
+  summary: Recursive CTE (`getTree`/`countDescendants`) không có giới hạn độ sâu.
+  evidence: Rủi ro thấp với app cá nhân 1 người tự xây cây của mình; cân nhắc thêm giới hạn nếu sau này mở rộng hơn.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-page-crud-tree.md`
+  summary: `getBearerToken` tin vào header `x-forwarded-proto` từ request mà không có gì đảm bảo reverse proxy thật sự ghi đè header này trước khi tới app.
+  evidence: Phụ thuộc cấu hình hạ tầng reverse proxy thật (spine AD-6) khi triển khai thật — chưa dựng hạ tầng đó nên chưa kiểm chứng được.

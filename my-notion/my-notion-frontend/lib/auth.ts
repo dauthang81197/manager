@@ -1,6 +1,7 @@
 import NextAuth, { CredentialsSignin } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import Google from 'next-auth/providers/google';
+import { getToken } from 'next-auth/jwt';
 import jwt from 'jsonwebtoken';
 import { backendApiUrl } from './backend';
 
@@ -180,3 +181,36 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
 });
+
+/**
+ * Extracts the raw session JWT from the request (cookie or `Authorization`
+ * header) so Route Handlers can forward it to my-notion-backend as
+ * `Authorization: Bearer <token>` (spine AD-5 + Design Notes: "mỗi route đọc
+ * session Auth.js server-side, lấy JWT, gọi backendApiUrl(...) kèm
+ * Authorization: Bearer"). `raw: true` returns the token exactly as stored —
+ * since our custom `encode()` above signs it directly with `jsonwebtoken`
+ * instead of Auth.js's default encrypted JWE, this is byte-identical to what
+ * `signToken`/the backend's JwtGuard produce/verify.
+ *
+ * `secureCookie` must match whatever Auth.js used when it *wrote* the
+ * cookie, or `getToken` looks for the wrong cookie name (`__Secure-`
+ * prefixed vs not) and silently finds nothing. @auth/core decides that from
+ * the request's own protocol (`url.protocol === "https:"`), not `NODE_ENV` —
+ * mirrored here via `x-forwarded-proto` (self-hosted behind our own
+ * TLS-terminating proxy per spine AD-6, `trustHost: true` above) falling
+ * back to the request URL's scheme.
+ */
+export async function getBearerToken(request: Request): Promise<string | null> {
+  const forwardedProto = request.headers.get('x-forwarded-proto');
+  const isHttps = forwardedProto
+    ? forwardedProto.split(',')[0].trim() === 'https'
+    : request.url.startsWith('https://');
+
+  const token = await getToken({
+    req: request,
+    secret: AUTH_SECRET,
+    raw: true,
+    secureCookie: isHttps,
+  });
+  return token ?? null;
+}
