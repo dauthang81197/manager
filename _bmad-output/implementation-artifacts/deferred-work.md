@@ -1,0 +1,23 @@
+# Deferred Work
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-auth.md`
+  summary: Login trả 401 (sai mật khẩu/email lạ) vs 423 (khoá) khác nhau đủ để suy ra email có tồn tại hay không (user enumeration qua timing/status code).
+  evidence: Với app cá nhân 1 người dùng, giá trị thực tế của việc "ẩn" email chủ sở hữu là thấp — chấp nhận rủi ro này ở v1, revisit nếu app được public rộng hơn.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-auth.md`
+  summary: JWT đã phát hành trước khi tài khoản bị khoá vẫn còn hiệu lực tới khi hết hạn (lockout chỉ chặn đăng nhập mới, không thu hồi session đang có).
+  evidence: Cần cơ chế revoke/blacklist token mới xử lý được — vượt phạm vi story 1; revisit cùng lúc với session management nếu cần.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-auth.md`
+  summary: argon2 hash dùng tham số mặc định của thư viện (không tự pin memoryCost/timeCost/parallelism).
+  evidence: Mặc định hiện tại đủ an toàn; chỉ đáng lo nếu một bản nâng cấp dependency âm thầm đổi default.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-auth.md`
+  summary: HttpExceptionFilter spread mọi field phụ trong body của HttpException vào response, không có allowlist.
+  evidence: Hiện tại chỉ có `lockedUntil` là field phụ hợp lệ; nếu sau này có exception mang field nhạy cảm sẽ vô tình lộ ra client.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-auth.md`
+  summary: Không có rate limiting trên `/auth/register`.
+  evidence: Chấp nhận được ở quy mô cá nhân hiện tại; cần xem lại nếu app tiếp xúc traffic không tin cậy.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-auth.md`
+  summary: my-notion-frontend chưa có framework test nào (không Jest/Vitest+RTL) — luồng hiển thị thông báo khoá tài khoản (`friendlyError`) và cấu hình Auth.js chưa được test tự động.
+  evidence: Chi phí dựng test framework cho 1 story chưa tương xứng; revisit khi logic frontend phức tạp hơn.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-auth.md`
+  summary: Trang đăng ký bỏ qua token trả về từ `register()`, gọi lại `signIn('credentials', ...)` gửi lại mật khẩu để lấy session — dư 1 vòng round-trip.
+  evidence: Không sai, chỉ kém tối ưu; không đáng sửa ngay.

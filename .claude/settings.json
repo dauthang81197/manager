@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 _bmad/scripts/resolve_customization.py --skill \".claude/skills/bmad-architecture\" --key workflow)",
+      "Bash(brew install *)",
+      "Bash(brew services *)",
+      "Bash(pg_isready)",
+      "Read(//Users/darius/project/exam/my-notion/my-notion-backend/**)",
+      "Bash(npm install *)",
+      "Bash(rm -rf generated)",
+      "Bash(npx prisma *)",
+      "Bash(mkdir -p \"/Users/darius/project/exam/my-notion/my-notion-backend/src/prisma\" \"/Users/darius/project/exam/my-notion/my-notion-backend/src/auth/dto\" \"/Users/darius/project/exam/my-notion/my-notion-backend/src/common/filters\")"
+    ],
+    "additionalDirectories": [
+      "/Users/darius/project/exam/my-notion/my-notion-backend/prisma",
+      "/Users/darius/project/exam/my-notion/my-notion-backend/src"
+    ]
+  }
+}

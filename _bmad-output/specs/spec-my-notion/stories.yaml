@@ -1,0 +1,120 @@
+- id: "1"
+  title: Auth
+  description: >-
+    Triển khai CAP-1: đăng ký/đăng nhập qua email + mật khẩu và Google OAuth.
+    Gồm khóa tạm đăng nhập sau 5 lần sai mật khẩu liên tiếp.
+  spec_checkpoint: true
+- id: "2"
+  title: Quản lý Trang - CRUD, cây, sidebar
+  description: >-
+    Triển khai CAP-2 và CAP-3: tạo/đổi tên/xóa Trang, hiển thị cây Trang lồng
+    nhau qua sidebar, cascade delete có xác nhận.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    Tuân theo spine AD-3: xóa cascade ở cấp DB (onDelete: Cascade trong
+    schema.prisma), tầng service không tự issue nhiều lệnh DELETE theo thứ tự
+    con-trước-cha; recursive CTE chỉ dùng để đọc cây và đếm số Trang con cho
+    hộp thoại xác nhận.
+- id: "3"
+  title: Block editor cơ bản + auto-save
+  description: >-
+    Triển khai CAP-4 và CAP-5: soạn thảo block đoạn văn/tiêu đề/bullet/todo
+    với auto-save khi ngừng gõ.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    Đóng băng đúng node vocabulary v1 theo spine AD-2: paragraph, heading
+    (level 1-3), bulletList/listItem, taskItem (chuẩn Tiptap, không tự tạo
+    custom node cho todo), image. Mọi bổ sung sau này phải qua cập nhật spine.
+- id: "4"
+  title: Upload ảnh cơ bản
+  description: >-
+    Triển khai CAP-9: chèn ảnh vào một block, lưu trên storage, hiển thị
+    đúng lại vị trí.
+  invoke_dev_with: >-
+    src của ảnh luôn là absolute URL do backend phục vụ (không dùng đường
+    dẫn tương đối), theo spine AD-2.
+- id: "5"
+  title: Đồng bộ đa thiết bị realtime
+  description: >-
+    Triển khai CAP-10: WebSocket gateway phát tín hiệu thay đổi tới các
+    session khác của cùng user, last-write-wins, và bắt kịp khi reconnect.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Theo đúng spine AD-4: payload WS chỉ là tín hiệu {type, pageId,
+    updatedAt} không kèm content; đủ bộ event page.created/updated/deleted/
+    moved/bulk_changed; gateway loại trừ chính socket vừa ghi (self-echo)
+    theo socket id; client bắt buộc REST refetch khi (re)connect trước khi
+    tin event tiếp theo. Và AD-5: JWT ký HS256 qua biến môi trường
+    AUTH_SECRET, verify ở bước handshake, ngắt kết nối khi token hết hạn.
+- id: "6"
+  title: Backup tự động
+  description: >-
+    Triển khai CAP-14: cron sao lưu PostgreSQL hàng ngày, giữ 7 bản gần
+    nhất, khôi phục được. Điểm kết thúc MVP.
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Nếu CAP-9 chọn lưu ảnh trên local disk (xem SPEC.md Open Questions),
+    backup phải phủ luôn thư mục ảnh, không chỉ pg_dump của database.
+- id: "7"
+  title: Block editor nâng cao
+  description: >-
+    Triển khai CAP-6, CAP-7, CAP-8: kéo-thả sắp xếp block, slash command,
+    chuyển đổi loại block không mất nội dung.
+- id: "8"
+  title: Database view - Table
+  description: >-
+    Triển khai CAP-11: hiển thị Trang con dạng bảng với cột tùy chỉnh.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    view_schema chưa có schema chính thức (xem SPEC.md Open Questions +
+    ARCHITECTURE-SPINE.md Deferred) — làm rõ hình dạng column definition và
+    nơi lưu cell values trước khi viết story spec chi tiết cho story này.
+- id: "9"
+  title: Database view - Kanban
+  description: >-
+    Triển khai CAP-12: hiển thị cùng dữ liệu dạng thẻ kéo-thả theo cột
+    trạng thái.
+  spec_checkpoint: true
+  invoke_dev_with: >-
+    Cùng vấn đề view_schema như story 8, cộng thêm cần một trường thứ tự
+    thẻ trong cột (không dùng updated_at/created_at để sort — cả hai đều
+    thay đổi vì lý do khác ngoài sắp xếp thủ công).
+- id: "10"
+  title: Markdown import/export
+  description: >-
+    Triển khai CAP-15: xuất Trang ra .md, nhập .md có sẵn thành Trang mới,
+    khớp node vocabulary v1. Điểm kết thúc Phase 2.
+  done_checkpoint: true
+- id: "11"
+  title: Tìm kiếm toàn văn
+  description: >-
+    Triển khai CAP-16: tìm kiếm nội dung trong tất cả Trang của Workspace.
+  invoke_dev_with: >-
+    Công cụ tìm kiếm (Postgres full-text search vs Meilisearch) chưa chốt —
+    quyết định vào đầu story này, xem SPEC.md Open Questions.
+- id: "12"
+  title: Database view - Calendar
+  description: >-
+    Triển khai CAP-13: hiển thị dữ liệu theo lịch dựa trên một cột kiểu
+    ngày tháng.
+- id: "13"
+  title: Comment trên block
+  description: >-
+    Triển khai CAP-17: gắn bình luận vào một block cụ thể mà không sửa nội
+    dung gốc.
+- id: "14"
+  title: Mention liên kết Trang
+  description: >-
+    Triển khai CAP-18: gõ @ để chèn liên kết nhanh tới một Trang khác.
+- id: "15"
+  title: Template có sẵn
+  description: >-
+    Triển khai CAP-19: thư viện mẫu Trang dựng sẵn để nhân bản nhanh.
+- id: "16"
+  title: API công khai
+  description: >-
+    Triển khai CAP-20: cho phép chương trình tự viết đọc/ghi dữ liệu qua
+    API key. Điểm kết thúc dự án.
+  spec_checkpoint: true
+  done_checkpoint: true
