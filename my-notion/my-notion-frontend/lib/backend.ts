@@ -16,6 +16,26 @@ export interface BackendProxyResult {
   body: unknown;
 }
 
+/** Ceiling on how long a Route Handler will wait for my-notion-backend. */
+export const BACKEND_TIMEOUT_MS = 30_000;
+
+/**
+ * Abort signal for a proxied backend call.
+ *
+ * Combines two independent reasons to give up:
+ *  - the client went away (navigated, unmounted, cancelled an image load) —
+ *    without forwarding this, the Next→Nest request and the backend's open
+ *    file descriptor stay alive for a response nobody will read;
+ *  - the backend wedged — a Route Handler invocation must not be pinned
+ *    indefinitely by an upstream that never answers.
+ */
+export function proxySignal(
+  request: Request,
+  timeoutMs: number = BACKEND_TIMEOUT_MS,
+): AbortSignal {
+  return AbortSignal.any([request.signal, AbortSignal.timeout(timeoutMs)]);
+}
+
 /**
  * Calls my-notion-backend and forwards its status/JSON body verbatim, so the
  * pages Route Handlers stay thin proxies — same pattern as story 1's

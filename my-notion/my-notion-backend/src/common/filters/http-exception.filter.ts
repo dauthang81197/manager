@@ -69,6 +69,8 @@ function defaultCodeForStatus(status: number): string {
       return 'FORBIDDEN';
     case HttpStatus.NOT_FOUND:
       return 'NOT_FOUND';
+    case HttpStatus.PAYLOAD_TOO_LARGE:
+      return 'PAYLOAD_TOO_LARGE';
     case HttpStatus.CONFLICT:
       return 'CONFLICT';
     case HttpStatus.LOCKED:

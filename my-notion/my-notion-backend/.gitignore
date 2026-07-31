@@ -46,6 +46,10 @@ lerna-debug.log*
 .temp
 .tmp
 
+# Uploaded images (FR-9) — local dev default for ASSET_STORAGE_DIR. User data,
+# never committed; in production this points at a backed-up mounted volume.
+/var
+
 # Runtime data
 pids
 *.pid

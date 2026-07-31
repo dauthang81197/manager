@@ -23,7 +23,8 @@ model User {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  pages Page[]
+  pages  Page[]
+  assets Asset[]
 
   @@map("users")
 }
@@ -60,4 +61,44 @@ model Page {
   @@index([ownerId])
   @@index([parentId])
   @@map("pages")
+}
+
+// spec-4-image-upload Code Map: model Asset (id uuid, ownerId, original
+// filename, mimeType, sizeBytes, storagePath, createdAt).
+//
+// The row is the access-control record for an uploaded image: `GET /assets/:id`
+// filters by (id, ownerId) so another user's asset 404s (never 403 — same
+// no-existence-leak rule pages follow).
+//
+// The bytes live on the server's local disk volume, NOT in Postgres (spec
+// "Always": local disk, no S3/paid cloud storage). `storagePath` is the path
+// *relative to* ASSET_STORAGE_DIR — storing it relative keeps rows valid when
+// the volume is remounted at a different absolute path (e.g. host vs Docker
+// container), and keeps a DB dump portable.
+//
+// FR-14/story 6 constraint: ASSET_STORAGE_DIR must be inside the backup set.
+// A pg_dump alone restores these rows but NOT the image bytes they point at.
+model Asset {
+  id String @id @default(uuid())
+
+  ownerId String @map("owner_id")
+  owner   User   @relation(fields: [ownerId], references: [id])
+
+  /// Original client-supplied name — metadata only (shown as the image's
+  /// `alt`). Never used to build a filesystem path: the on-disk name is the
+  /// generated uuid plus an extension derived from the *sniffed* mime type,
+  /// so a hostile "../../etc/passwd" filename can't escape the storage root.
+  filename String
+
+  /// Detected from the file's magic bytes at upload time, not from the
+  /// client-declared Content-Type. This is what `GET /assets/:id` serves back.
+  mimeType String @map("mime_type")
+
+  sizeBytes   Int    @map("size_bytes")
+  storagePath String @map("storage_path")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ownerId])
+  @@map("assets")
 }

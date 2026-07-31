@@ -51,3 +51,18 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-block-editor-autosave.md`
   summary: e2e test "3 loại block còn nguyên" thực chất chỉ chứng minh jsonb round-trip, không chứng minh Tiptap render đúng loại block sau reload.
   evidence: Phần render đã được verify bằng browser thật (Playwright) trong lần review này; test tự động cho phần đó cần frontend test infra (đã defer riêng).
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-image-upload.md`
+  summary: Ảnh chỉ ghi vào, không bao giờ xoá — không có endpoint xoá, không đếm tham chiếu, không job dọn rác. Xoá block ảnh/xoá Trang đều để lại file mồ côi vĩnh viễn, và story 6 sẽ nhân số file mồ côi đó lên 7 bản backup.
+  evidence: Cần thiết kế lifecycle riêng (đếm tham chiếu hoặc reaper quét content); "upload cơ bản" của FR-9 cố ý chưa bao gồm quản lý media.
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-image-upload.md`
+  summary: Không có quota dung lượng/rate limit cho upload — token hợp lệ có thể upload liên tục tới khi đầy ổ đĩa (kéo sập luôn Postgres nếu chung volume).
+  evidence: Rủi ro thấp với app 1 người dùng tự host; cân nhắc khi mở rộng hoặc nếu server dùng chung volume với DB.
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-image-upload.md`
+  summary: `ON DELETE RESTRICT` trên `assets.owner_id` khiến không xoá được user nếu chưa xoá hết asset; và dù xoá row cũng không xoá file trên đĩa.
+  evidence: Chưa có tính năng xoá tài khoản nên chưa chặn gì; xử lý cùng lúc với lifecycle ảnh ở trên.
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-image-upload.md`
+  summary: Không chặn ảnh "bom giải nén" (file nhỏ dưới 5MiB nhưng khai kích thước cực lớn) — trình duyệt xem có thể cạn bộ nhớ khi render.
+  evidence: Cần đọc header kích thước ảnh để chặn; rủi ro thấp khi chỉ chính mình upload ảnh của mình.
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-image-upload.md`
+  summary: `MAX_IMAGE_BYTES` chép tay ở 3 nơi (backend constants, proxy route, editor) mà không có test nào bắt khi chúng lệch nhau.
+  evidence: Trùng lặp có chủ đích vì không dùng monorepo tooling (AD-6); nên thêm 1 test canh lệch khi có dịp.

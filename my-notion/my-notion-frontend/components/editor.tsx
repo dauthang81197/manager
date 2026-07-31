@@ -2,12 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { EditorContent, type JSONContent, useEditor } from '@tiptap/react';
+import {
+  EditorContent,
+  type Editor as TiptapEditor,
+  type JSONContent,
+  useEditor,
+} from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Image from '@tiptap/extension-image';
-import { isSessionExpired } from '@/lib/api-errors';
+import { isSessionExpired, SessionExpiredError } from '@/lib/api-errors';
 
 /**
  * spec-3 Design Notes: debounce after typing stops, plus a max-wait ceiling
@@ -15,6 +20,83 @@ import { isSessionExpired } from '@/lib/api-errors';
  */
 const AUTOSAVE_DEBOUNCE_MS = 900;
 const AUTOSAVE_MAX_WAIT_MS = 5000;
+
+/**
+ * Mirrors my-notion-backend's `src/assets/assets.constants.ts` (spec-4).
+ *
+ * The backend re-checks both, and decides the format by sniffing the file's
+ * magic bytes rather than trusting `File.type` — spec-4 is explicit that the
+ * client's `accept` attribute is not a control. These copies exist only so an
+ * unsupported or oversized file gets a specific message immediately instead of
+ * after a round-trip that ends in a 400/413.
+ */
+const ACCEPTED_IMAGE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+];
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_MB = MAX_IMAGE_BYTES / (1024 * 1024);
+
+type UploadStatus =
+  | { state: 'idle' }
+  | { state: 'uploading'; index: number; total: number }
+  | { state: 'error'; message: string };
+
+/** Image files out of a clipboard/drag payload, ignoring everything else. */
+function imageFilesFrom(list: FileList | null | undefined): File[] {
+  return Array.from(list ?? []).filter((file) =>
+    file.type.startsWith('image/'),
+  );
+}
+
+async function readErrorMessage(
+  res: Response,
+  fallback: string,
+): Promise<string> {
+  try {
+    const body: unknown = await res.json();
+    const message = (body as { error?: { message?: unknown } })?.error?.message;
+    if (typeof message === 'string' && message.length > 0) return message;
+  } catch {
+    // Non-JSON error body — fall through to the generic message.
+  }
+  return fallback;
+}
+
+/**
+ * Uploads one image through the `/api/assets` Route Handler (never straight to
+ * the backend — spine AD-1/AD-5) and returns the absolute URL to put in the
+ * `image` node's `src` (AD-2).
+ */
+async function uploadImage(file: File): Promise<{ src: string; alt: string }> {
+  const body = new FormData();
+  body.append('file', file, file.name);
+
+  const res = await fetch('/api/assets', {
+    method: 'POST',
+    body,
+    cache: 'no-store',
+  });
+
+  // Same distinction the auto-save path makes: a 401 will never succeed on
+  // retry, so it needs "sign in again", not "try again".
+  if (res.status === 401) throw new SessionExpiredError();
+  if (!res.ok) {
+    throw new Error(
+      await readErrorMessage(res, `Tải ảnh lên thất bại (${res.status})`),
+    );
+  }
+
+  const data: unknown = await res.json();
+  const url = (data as { url?: unknown })?.url;
+  if (typeof url !== 'string' || url.length === 0) {
+    throw new Error('Máy chủ không trả về địa chỉ ảnh hợp lệ');
+  }
+  const filename = (data as { filename?: unknown })?.filename;
+  return { src: url, alt: typeof filename === 'string' ? filename : '' };
+}
 
 type SaveStatus =
   | 'idle'
@@ -93,6 +175,29 @@ function SaveStatusIndicator({
   }
 }
 
+function UploadStatusIndicator({ status }: { status: UploadStatus }) {
+  if (status.state === 'idle') return null;
+
+  if (status.state === 'uploading') {
+    return (
+      <span role="status" aria-live="polite" className="text-sm text-zinc-500">
+        Đang tải ảnh lên…
+        {status.total > 1 ? ` (${status.index}/${status.total})` : ''}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className="text-sm text-red-600 dark:text-red-400"
+    >
+      {status.message}
+    </span>
+  );
+}
+
 /**
  * Tiptap editor wiring for story 3 (CAP-4/CAP-5, FR-4/FR-5).
  *
@@ -114,6 +219,19 @@ function SaveStatusIndicator({
  * debounce window is lost — and `autolink` (also on by default) silently
  * writes `link` marks that AD-2 never sanctioned. Re-enabling links needs a
  * spine amendment, not just a config change.
+ *
+ * **Images (story 4, CAP-9/FR-9).** Three ways in — the toolbar button, paste,
+ * and drag-and-drop — all funnel through the same upload: POST the file to the
+ * `/api/assets` Route Handler, then insert an `image` node whose `src` is the
+ * absolute URL the backend returns (AD-2). Nothing is ever inserted before its
+ * upload succeeds, so this editor never writes a blob: URL or a reference to an
+ * image that doesn't exist server-side.
+ *
+ * `allowBase64` stays off and incoming `<img>` tags are stripped so that
+ * ordinary editing keeps every `src` pointing at an absolute URL this app
+ * serves. Both are client-side measures only — the backend stores whatever
+ * well-formed document it is given, so this is what the editor *produces*, not
+ * an invariant enforced on `pages.content`.
  */
 export default function Editor({
   initialContent,
@@ -121,6 +239,20 @@ export default function Editor({
   onSaveBeforeUnload,
 }: EditorProps) {
   const [status, setStatus] = useState<SaveStatus>('idle');
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
+    state: 'idle',
+  });
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const editorRef = useRef<TiptapEditor | null>(null);
+  // Read by the ProseMirror paste/drop handlers below. Those are captured once
+  // when the editor is constructed, so they must not close over the callback
+  // directly — a ref is what lets them always reach the current one.
+  const insertImagesRef = useRef<(files: File[], at?: number) => void>(
+    () => {},
+  );
+  // Batches run strictly one after another — see the queue in the effect below.
+  const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   // Refs, not state: the debounce timer, the unmount cleanup and the
   // beforeunload handler all need the *latest* values without being stale
@@ -199,6 +331,171 @@ export default function Editor({
     }
   }, [clearTimers]);
 
+  /**
+   * Uploads images, then inserts one `image` node per successful upload.
+   *
+   * `at` is a document position (used by drop, so the image lands where it was
+   * dropped rather than at the cursor); when omitted, images go in at the
+   * current selection.
+   *
+   * Uploads run one at a time and stop at the first failure: the alternative —
+   * firing them in parallel — would let images land in a different order than
+   * the user dropped them.
+   */
+  const insertImages = useCallback(async (files: File[], at?: number) => {
+    // Auto-save is paused because the stored document couldn't be parsed; an
+    // inserted image would never be persisted, so don't pretend otherwise.
+    if (contentErrorRef.current) {
+      setUploadStatus({
+        state: 'error',
+        message: 'Đã tạm dừng tự động lưu Trang này — không thể chèn ảnh.',
+      });
+      return;
+    }
+
+    // Validate-and-skip rather than abort-on-first-offender: dropping five
+    // photos and one stray .txt should upload the five and say what it left
+    // out, not silently discard the whole batch.
+    const accepted: File[] = [];
+    const skipped: string[] = [];
+    for (const file of files) {
+      if (!ACCEPTED_IMAGE_MIME_TYPES.includes(file.type)) {
+        skipped.push(`"${file.name}" không phải PNG/JPEG/GIF/WebP`);
+      } else if (file.size > MAX_IMAGE_BYTES) {
+        skipped.push(`"${file.name}" vượt quá ${MAX_IMAGE_MB}MB`);
+      } else {
+        accepted.push(file);
+      }
+    }
+
+    if (accepted.length === 0) {
+      setUploadStatus(
+        skipped.length > 0
+          ? { state: 'error', message: `Đã bỏ qua: ${skipped.join('; ')}.` }
+          : { state: 'idle' },
+      );
+      return;
+    }
+
+    /**
+     * Drop position, kept valid while uploads are in flight.
+     *
+     * `posAtCoords` ran synchronously at drop time, but the insert happens a
+     * round-trip later — auto-save, a WS-driven refetch or plain typing can
+     * shrink the document in between, and a stale position makes
+     * `insertContentAt` throw a RangeError. Mapping it through every
+     * intervening transaction keeps it pointing at the same logical spot.
+     */
+    let position = at;
+    const editorAtStart = editorRef.current;
+    const trackPosition = ({
+      transaction,
+    }: {
+      transaction: { docChanged: boolean; mapping: { map(pos: number): number } };
+    }) => {
+      if (typeof position === 'number' && transaction.docChanged) {
+        position = transaction.mapping.map(position);
+      }
+    };
+    editorAtStart?.on('transaction', trackPosition);
+
+    try {
+      for (const [index, file] of accepted.entries()) {
+        // Also clears any error left over from a previous batch.
+        setUploadStatus({
+          state: 'uploading',
+          index: index + 1,
+          total: accepted.length,
+        });
+
+        let uploaded: { src: string; alt: string };
+        try {
+          uploaded = await uploadImage(file);
+        } catch (error) {
+          setUploadStatus({
+            state: 'error',
+            message: isSessionExpired(error)
+              ? 'Phiên đăng nhập đã hết hạn — chưa tải được ảnh lên.'
+              : error instanceof Error
+                ? error.message
+                : 'Tải ảnh lên thất bại.',
+          });
+          return;
+        }
+
+        const editor = editorRef.current;
+        // The user navigated away mid-upload. The image is stored server-side
+        // (harmless — nothing references it), but there's no document left to
+        // insert it into.
+        if (!editor || editor.isDestroyed) return;
+
+        const node = {
+          type: 'image',
+          attrs: { src: uploaded.src, alt: uploaded.alt },
+        };
+
+        try {
+          if (typeof position === 'number') {
+            // Clamped as well as mapped: mapping handles edits, this handles
+            // the document being replaced wholesale (e.g. remounted content).
+            const clamped = Math.max(
+              0,
+              Math.min(position, editor.state.doc.content.size),
+            );
+            editor.chain().focus().insertContentAt(clamped, node).run();
+            // Only the first image honors the drop position; the rest follow
+            // the cursor, which insertContentAt leaves after what it inserted.
+            position = undefined;
+          } else {
+            editor
+              .chain()
+              .focus()
+              .setImage({ src: uploaded.src, alt: uploaded.alt })
+              .run();
+          }
+        } catch {
+          // A position that survived mapping and clamping can still be
+          // rejected (e.g. it now points inside an atom). Report it instead of
+          // letting the throw escape into the queue's catch, which would leave
+          // the indicator stuck on "Đang tải ảnh lên…" forever.
+          setUploadStatus({
+            state: 'error',
+            message:
+              'Ảnh đã tải lên nhưng không chèn được vào Trang — nội dung đã thay đổi. Thử chèn lại.',
+          });
+          return;
+        }
+      }
+
+      setUploadStatus(
+        skipped.length > 0
+          ? { state: 'error', message: `Đã bỏ qua: ${skipped.join('; ')}.` }
+          : { state: 'idle' },
+      );
+    } finally {
+      // Must run even if an insert throws: otherwise the listener leaks and
+      // the status stays pinned on "Đang tải ảnh lên…" with no way back.
+      editorAtStart?.off('transaction', trackPosition);
+    }
+  }, []);
+
+  useEffect(() => {
+    /**
+     * Serializes batches. The toolbar button is disabled while uploading, but
+     * paste and drop are not gated at all — two concurrent `insertImages`
+     * loops would interleave their counters in one shared status, and whichever
+     * finished first would flip it to idle while the other was still running.
+     */
+    insertImagesRef.current = (files, at) => {
+      uploadQueueRef.current = uploadQueueRef.current
+        .then(() => insertImages(files, at))
+        .catch(() => {
+          // insertImages reports its own failures through uploadStatus; this
+          // only stops one rejected batch from poisoning the queue.
+        });
+    };
+  }, [insertImages]);
+
   const editor = useEditor({
     // Next.js SSR: Tiptap renders differently server vs client on first
     // paint, which mismatches hydration unless deferred to the client.
@@ -228,8 +525,75 @@ export default function Editor({
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
-      Image,
+      // Explicit even though it is the default: spec-4 forbids base64-embedded
+      // images outright, and this is the switch that would allow them.
+      Image.configure({ allowBase64: false }),
     ],
+    editorProps: {
+      /**
+       * Pasting image files (a screenshot from the clipboard, the common case
+       * FR-9 exists for). Returning true takes over from ProseMirror's default
+       * paste handling entirely.
+       */
+      handlePaste(_view, event) {
+        const files = imageFilesFrom(event.clipboardData?.files);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        insertImagesRef.current(files);
+        return true;
+      },
+
+      /**
+       * Dropping image files from the OS. `moved` is true when ProseMirror is
+       * relocating a node from inside this same document — that is a block
+       * move, not an upload, so it must fall through to the default handler.
+       */
+      handleDrop(view, event, _slice, moved) {
+        if (moved) return false;
+        const files = imageFilesFrom(event.dataTransfer?.files);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        // Insert where it was dropped rather than at the cursor, which is
+        // wherever the user last happened to be typing.
+        const coords = view.posAtCoords({
+          left: event.clientX,
+          top: event.clientY,
+        });
+        insertImagesRef.current(files, coords?.pos);
+        return true;
+      },
+
+      /**
+       * Strips `<img>` out of incoming *HTML*.
+       *
+       * Copying rich text from a web page, or dragging an image element out of
+       * one, would otherwise bring `<img src="https://some-other-site/...">`
+       * into the document — an image we don't host, that breaks when that site
+       * changes, and that leaks a request to a third party every time the Page
+       * is opened. Pasted/dropped image *files* are unaffected: they arrive as
+       * `clipboardData.files`/`dataTransfer.files` and are uploaded above.
+       *
+       * This covers drag-and-drop as well as paste: ProseMirror's drop handler
+       * routes `dataTransfer`'s `text/html` through the same
+       * `parseFromClipboard` path that applies this hook.
+       *
+       * **Scope.** This is a client-side convenience, NOT an enforced
+       * invariant. The backend accepts any well-formed Tiptap document
+       * (`UpdateContentDto` is `@IsObject()`), so a crafted `PATCH
+       * /pages/:id/content` can still store a foreign or `data:` URL. Treating
+       * this as a security control would be wrong; it exists so that ordinary
+       * copy-paste doesn't quietly produce content that violates AD-2.
+       */
+      transformPastedHTML(html) {
+        // Case-insensitive: clipboard HTML from Word/Outlook and older CMSes
+        // emits `<IMG SRC=...>`, which a lowercase-only check skips entirely
+        // while ProseMirror goes on to match it perfectly happily.
+        if (!/<img/i.test(html)) return html;
+        const parsed = new DOMParser().parseFromString(html, 'text/html');
+        parsed.querySelectorAll('img').forEach((img) => img.remove());
+        return parsed.body.innerHTML;
+      },
+    },
     content: initialContent,
     onUpdate({ editor }) {
       latestContentRef.current = editor.getJSON();
@@ -260,6 +624,12 @@ export default function Editor({
       }
     },
   });
+
+  // Kept in a ref so the async upload loop can reach the live editor after an
+  // await, without re-creating the loop every time `editor` changes identity.
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
 
   // In-app navigation (I/O matrix: "Đóng ngay sau khi gõ (trong khoảng
   // debounce)"). Gated on isDirty — NOT on "is a timer pending" — so content
@@ -305,11 +675,45 @@ export default function Editor({
     };
   }, []);
 
+  const isUploading = uploadStatus.state === 'uploading';
+
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="rounded border border-zinc-300 px-2 py-1 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            Chèn ảnh
+          </button>
+          <UploadStatusIndicator status={uploadStatus} />
+        </div>
         <SaveStatusIndicator status={status} onRetry={() => void save()} />
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        // A hint for the file picker only — the real check is the backend's
+        // magic-byte sniff, which `accept` cannot substitute for (spec-4).
+        accept={ACCEPTED_IMAGE_MIME_TYPES.join(',')}
+        multiple
+        hidden
+        aria-label="Chọn ảnh để chèn vào Trang"
+        onChange={(event) => {
+          // Not filtered to image/* here, unlike paste/drop: the user picked
+          // these files deliberately, so an unsupported one deserves an
+          // explicit message rather than being silently ignored.
+          const files = Array.from(event.target.files ?? []);
+          // Reset so re-picking the same file still fires a change event.
+          event.target.value = '';
+          if (files.length > 0) insertImagesRef.current(files);
+        }}
+      />
+
       <EditorContent editor={editor} className="block-editor" />
     </div>
   );
