@@ -1,6 +1,10 @@
-import { NextResponse } from 'next/server';
 import { getBearerToken } from '@/lib/auth';
-import { fetchBackendJson, unauthorizedProxyResponse } from '@/lib/backend';
+import {
+  encodePathSegment,
+  fetchBackendJson,
+  proxyJsonResponse,
+  unauthorizedProxyResponse,
+} from '@/lib/backend';
 
 /**
  * Proxies GET /api/v1/pages/:id/descendants-count — used by the sidebar's
@@ -16,8 +20,8 @@ export async function GET(
 
   const { id } = await params;
   const { status, body } = await fetchBackendJson(
-    `/pages/${id}/descendants-count`,
+    `/pages/${encodePathSegment(id)}/descendants-count`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
-  return NextResponse.json(body, { status });
+  return proxyJsonResponse(body, status);
 }

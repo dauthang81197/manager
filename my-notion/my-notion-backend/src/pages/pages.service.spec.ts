@@ -161,6 +161,68 @@ describe('PagesService', () => {
     });
   });
 
+  describe('findOne — I/O matrix: Mở Trang có nội dung', () => {
+    it('returns the full page (incl. content) when owned by the current user', async () => {
+      const expected = row({ content: { type: 'doc', content: [] } });
+      prisma.page.findFirst.mockResolvedValue(expected);
+
+      const page = await service.findOne('owner-1', 'page-1');
+
+      expect(prisma.page.findFirst).toHaveBeenCalledWith({
+        where: { id: 'page-1', ownerId: 'owner-1' },
+        // ownerId is never selected — it must not reach the browser.
+        select: expect.not.objectContaining({ ownerId: true }),
+      });
+      expect(page).toEqual(expected);
+    });
+
+    it('404s (not 403) for a page that does not exist or belongs to another user', async () => {
+      prisma.page.findFirst.mockResolvedValue(null);
+
+      await expect(service.findOne('owner-1', 'someone-elses-page')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('updateContent — auto-save, atomic updateMany filtered by ownerId', () => {
+    it('overwrites content when the page belongs to the current owner, via a single atomic updateMany', async () => {
+      const newContent = { type: 'doc', content: [{ type: 'paragraph' }] };
+      prisma.page.updateMany.mockResolvedValue({ count: 1 });
+      prisma.page.findFirst.mockResolvedValue(row({ content: newContent }));
+
+      const page = await service.updateContent('owner-1', 'page-1', {
+        content: newContent,
+      });
+
+      expect(prisma.page.updateMany).toHaveBeenCalledWith({
+        where: { id: 'page-1', ownerId: 'owner-1' },
+        data: { content: newContent },
+      });
+      expect(page.content).toEqual(newContent);
+    });
+
+    it('404s (not 403) updating content on a page belonging to another user, without a separate check-then-mutate race window', async () => {
+      prisma.page.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.updateContent('owner-1', 'someone-elses-page', {
+          content: { type: 'doc' },
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.page.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('404s if the page vanishes between the atomic update and the re-read (extreme TOCTOU edge case)', async () => {
+      prisma.page.updateMany.mockResolvedValue({ count: 1 });
+      prisma.page.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.updateContent('owner-1', 'page-1', { content: {} }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('remove — cascade delete (spine AD-3)', () => {
     it('issues a single atomic deleteMany filtered by id AND ownerId, relying on the DB FK cascade for descendants', async () => {
       prisma.page.deleteMany.mockResolvedValue({ count: 1 });

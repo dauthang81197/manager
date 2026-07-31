@@ -63,9 +63,31 @@ export async function fetchBackendJson(
   }
 }
 
+/**
+ * JSON response for a proxy Route Handler, explicitly uncacheable.
+ *
+ * Page content is rewritten every ~900ms by auto-save, so relying on the mere
+ * absence of a caching directive (and on every intermediary agreeing) is
+ * optimistic — a stale read here shows the user content they already changed.
+ */
+export function proxyJsonResponse(
+  body: unknown,
+  status: number,
+): NextResponse {
+  return NextResponse.json(body, {
+    status,
+    headers: { 'Cache-Control': 'no-store' },
+  });
+}
+
+/** Path-segment encoding for ids interpolated into a backend URL. */
+export function encodePathSegment(value: string): string {
+  return encodeURIComponent(value);
+}
+
 export function unauthorizedProxyResponse(): NextResponse {
-  return NextResponse.json(
+  return proxyJsonResponse(
     { error: { code: 'UNAUTHORIZED', message: 'Not authenticated' } },
-    { status: 401 },
+    401,
   );
 }

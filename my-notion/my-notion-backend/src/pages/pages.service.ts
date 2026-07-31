@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../../generated/prisma/client';
 import { CreatePageDto } from './dto/create-page.dto';
 import { RenamePageDto } from './dto/rename-page.dto';
+import { UpdateContentDto } from './dto/update-content.dto';
 
 export interface PageTreeNode {
   id: string;
@@ -22,6 +23,19 @@ interface PageTreeRow {
 interface DescendantsCountRow {
   count: number;
 }
+
+/**
+ * Fields returned to the client for a single Page. `ownerId` is deliberately
+ * excluded — the client already knows who it is (the JWT it authenticated
+ * with), and echoing the row's owner back into the browser serves nothing.
+ */
+const PAGE_SELECT = {
+  id: true,
+  parentId: true,
+  title: true,
+  content: true,
+  updatedAt: true,
+} as const;
 
 function pageNotFound(): NotFoundException {
   // Same 404 whether the page truly doesn't exist or just doesn't belong to
@@ -93,6 +107,45 @@ export class PagesService {
     // instant between our update and this read (another concurrent delete),
     // that's still correctly a 404 rather than an unhandled null-dereference.
     const page = await this.prisma.page.findFirst({ where: { id, ownerId } });
+    if (!page) {
+      throw pageNotFound();
+    }
+    return page;
+  }
+
+  /** Full Page (incl. `content`) — spec-3 I/O matrix: "Mở Trang có nội dung". */
+  async findOne(ownerId: string, id: string) {
+    const page = await this.prisma.page.findFirst({
+      where: { id, ownerId },
+      select: PAGE_SELECT,
+    });
+    if (!page) {
+      throw pageNotFound();
+    }
+    return page;
+  }
+
+  /**
+   * Overwrites the whole Tiptap `content` document (spine AD-2 — one jsonb
+   * blob per Page, no separate `blocks` table). Same atomic check-and-mutate
+   * as rename()/remove(): updateMany's `where` filters by id AND ownerId in
+   * one statement, so a page belonging to another user 404s (not 403) with
+   * no separate check-then-mutate race window. Backend does not validate
+   * the document's inner shape — UpdateContentDto only requires an object.
+   */
+  async updateContent(ownerId: string, id: string, dto: UpdateContentDto) {
+    const { count } = await this.prisma.page.updateMany({
+      where: { id, ownerId },
+      data: { content: dto.content as Prisma.InputJsonValue },
+    });
+    if (count === 0) {
+      throw pageNotFound();
+    }
+
+    const page = await this.prisma.page.findFirst({
+      where: { id, ownerId },
+      select: PAGE_SELECT,
+    });
     if (!page) {
       throw pageNotFound();
     }

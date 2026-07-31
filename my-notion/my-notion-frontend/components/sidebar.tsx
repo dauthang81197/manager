@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { emitPageRenamed } from '@/lib/page-events';
 
 const UNTITLED = 'Không có tiêu đề';
 
@@ -140,7 +141,7 @@ export function Sidebar() {
     setRenamingId(null);
     const title = value.trim();
     if (!title) return;
-    const res = await fetch(`/api/pages/${id}`, {
+    const res = await fetch(`/api/pages/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title }),
@@ -149,13 +150,18 @@ export function Sidebar() {
       setError('Không đổi tên được Trang. Vui lòng thử lại.');
       return;
     }
+    // Keep the open Page's heading in step — it fetched its title on mount
+    // and has no other way to learn about a rename done from here.
+    emitPageRenamed({ id, title });
     await loadTree();
   }
 
   async function deletePage(node: PageTreeNode) {
     setBusyId(node.id);
     try {
-      const countRes = await fetch(`/api/pages/${node.id}/descendants-count`);
+      const countRes = await fetch(
+        `/api/pages/${encodeURIComponent(node.id)}/descendants-count`,
+      );
 
       // FR-2 consequence: confirm dialog states the exact number of
       // descendant Pages that will be cascade-deleted. If the count itself
@@ -173,7 +179,7 @@ export function Sidebar() {
       }
       if (!window.confirm(message)) return;
 
-      const deleteRes = await fetch(`/api/pages/${node.id}`, {
+      const deleteRes = await fetch(`/api/pages/${encodeURIComponent(node.id)}`, {
         method: 'DELETE',
       });
       if (!deleteRes.ok) {

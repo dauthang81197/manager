@@ -36,3 +36,18 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-page-crud-tree.md`
   summary: `getBearerToken` tin vào header `x-forwarded-proto` từ request mà không có gì đảm bảo reverse proxy thật sự ghi đè header này trước khi tới app.
   evidence: Phụ thuộc cấu hình hạ tầng reverse proxy thật (spine AD-6) khi triển khai thật — chưa dựng hạ tầng đó nên chưa kiểm chứng được.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-block-editor-autosave.md`
+  summary: Không có optimistic concurrency (version/If-Match) — 2 tab mở cùng Trang sẽ ghi đè nhau âm thầm (last-write-wins).
+  evidence: Đúng thiết kế đã chốt ở spine AD-4 cho 1 người dùng; sẽ xử lý đúng chỗ ở story 5 (đồng bộ đa thiết bị) chứ không phải ở đây.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-block-editor-autosave.md`
+  summary: 4 Route Handler proxy gần như giống hệt nhau (token → 401 → params → forward), chưa tách helper chung.
+  evidence: Trùng lặp có thật nhưng chưa gây lỗi; gom lại khi thêm proxy thứ 5-6.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-block-editor-autosave.md`
+  summary: Editor chưa có toolbar/slash-menu — chỉ tạo được heading/list/todo qua markdown input rule, không có gợi ý nào cho người dùng.
+  evidence: Slash command là story 7 (Phase 2) theo đúng roadmap; nhưng cân nhắc thêm placeholder gợi ý cú pháp sớm hơn nếu thấy khó dùng.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-block-editor-autosave.md`
+  summary: Node `image` đã cấu hình trong editor nhưng chưa có cách nào chèn ảnh (chưa toolbar/paste/drop, chưa endpoint upload).
+  evidence: Đúng scope — upload ảnh là story 4; node để sẵn để story 4 chỉ cần thêm UI/endpoint.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-block-editor-autosave.md`
+  summary: e2e test "3 loại block còn nguyên" thực chất chỉ chứng minh jsonb round-trip, không chứng minh Tiptap render đúng loại block sau reload.
+  evidence: Phần render đã được verify bằng browser thật (Playwright) trong lần review này; test tự động cho phần đó cần frontend test infra (đã defer riêng).

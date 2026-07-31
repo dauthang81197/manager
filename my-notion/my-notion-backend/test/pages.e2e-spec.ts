@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
+import { JSON_BODY_LIMIT } from '../src/common/body-limit';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
@@ -32,9 +34,12 @@ describe('Pages (e2e, real Postgres)', () => {
       imports: [AppModule],
     }).compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication<NestExpressApplication>();
     // Mirrors main.ts's real bootstrap so this exercises the same routing/
-    // validation/error-shape behavior production requests go through.
+    // validation/error-shape/body-size behavior production requests go through.
+    (app as NestExpressApplication).useBodyParser('json', {
+      limit: JSON_BODY_LIMIT,
+    });
     app.setGlobalPrefix('api/v1');
     app.useGlobalPipes(
       new ValidationPipe({
@@ -182,6 +187,190 @@ describe('Pages (e2e, real Postgres)', () => {
       .expect(200);
 
     expect(treeB.body).toEqual([]);
+  });
+
+  it('GET /pages/:id returns the full Page including content with all 3 v1 block types intact (spec-3 acceptance criteria)', async () => {
+    const { token } = await registerUser('e2e-content-get');
+
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/pages')
+      .set(bearer(token))
+      .send({ title: 'Mixed content page' })
+      .expect(201);
+
+    const content = {
+      type: 'doc',
+      content: [
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Heading' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'Some paragraph text' }] },
+        {
+          type: 'taskList',
+          content: [
+            {
+              type: 'taskItem',
+              attrs: { checked: true },
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Do the thing' }] }],
+            },
+          ],
+        },
+      ],
+    };
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/pages/${created.body.id}/content`)
+      .set(bearer(token))
+      .send({ content })
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/pages/${created.body.id}`)
+      .set(bearer(token))
+      .expect(200);
+
+    expect(res.body.id).toBe(created.body.id);
+    expect(res.body.content).toEqual(content);
+    // No mixing of block types: exactly one heading, one paragraph, one taskList node at the top level.
+    const topLevelTypes = res.body.content.content.map((n: { type: string }) => n.type);
+    expect(topLevelTypes).toEqual(['heading', 'paragraph', 'taskList']);
+  });
+
+  it('GET /pages/:id 404s for a Page belonging to another user (never leaks existence, no 403)', async () => {
+    const userA = await registerUser('e2e-getid-a');
+    const userB = await registerUser('e2e-getid-b');
+
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/pages')
+      .set(bearer(userA.token))
+      .send({ title: "A's page" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/pages/${created.body.id}`)
+      .set(bearer(userB.token))
+      .expect(404);
+  });
+
+  it('PATCH /pages/:id/content persists the latest content on the real DB row (auto-save acceptance criteria)', async () => {
+    const { token } = await registerUser('e2e-content-patch');
+
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/pages')
+      .set(bearer(token))
+      .send({ title: 'Autosave target' })
+      .expect(201);
+
+    const content = { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
+
+    const patchRes = await request(app.getHttpServer())
+      .patch(`/api/v1/pages/${created.body.id}/content`)
+      .set(bearer(token))
+      .send({ content })
+      .expect(200);
+
+    expect(patchRes.body.content).toEqual(content);
+
+    // Direct DB read bypassing the app — proves the write actually landed,
+    // not just that the endpoint echoed a 200.
+    const dbRow = await prisma.page.findUnique({ where: { id: created.body.id } });
+    expect(dbRow?.content).toEqual(content);
+  });
+
+  it('PATCH /pages/:id/content 404s when pageId belongs to another user (spec-3 acceptance criteria)', async () => {
+    const userA = await registerUser('e2e-patch-a');
+    const userB = await registerUser('e2e-patch-b');
+
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/pages')
+      .set(bearer(userA.token))
+      .send({ title: "A's page" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/pages/${created.body.id}/content`)
+      .set(bearer(userB.token))
+      .send({ content: { type: 'doc' } })
+      .expect(404);
+  });
+
+  it('never leaks ownerId to the client on GET /pages/:id or PATCH /pages/:id/content', async () => {
+    const { token } = await registerUser('e2e-no-owner-leak');
+
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/pages')
+      .set(bearer(token))
+      .send({ title: 'Owner leak check' })
+      .expect(201);
+
+    const getRes = await request(app.getHttpServer())
+      .get(`/api/v1/pages/${created.body.id}`)
+      .set(bearer(token))
+      .expect(200);
+    expect(getRes.body).not.toHaveProperty('ownerId');
+
+    const patchRes = await request(app.getHttpServer())
+      .patch(`/api/v1/pages/${created.body.id}/content`)
+      .set(bearer(token))
+      .send({ content: { type: 'doc', content: [] } })
+      .expect(200);
+    expect(patchRes.body).not.toHaveProperty('ownerId');
+
+    // Still returns what the editor actually needs.
+    expect(getRes.body).toMatchObject({
+      id: created.body.id,
+      title: 'Owner leak check',
+    });
+    expect(getRes.body).toHaveProperty('updatedAt');
+  });
+
+  it('accepts a Page document far larger than Express\'s 100kb default body limit', async () => {
+    const { token } = await registerUser('e2e-large-body');
+
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/pages')
+      .set(bearer(token))
+      .send({ title: 'Long page' })
+      .expect(201);
+
+    // ~600kb of paragraphs — comfortably past the 100kb default that would
+    // otherwise 413 (and 413 wouldn't even carry our error envelope).
+    const paragraphs = Array.from({ length: 3000 }, (_, i) => ({
+      type: 'paragraph',
+      content: [{ type: 'text', text: `Đoạn văn số ${i} `.repeat(10) }],
+    }));
+    const content = { type: 'doc', content: paragraphs };
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/pages/${created.body.id}/content`)
+      .set(bearer(token))
+      .send({ content })
+      .expect(200);
+
+    const dbRow = await prisma.page.findUnique({
+      where: { id: created.body.id },
+    });
+    expect((dbRow?.content as { content: unknown[] }).content).toHaveLength(3000);
+  });
+
+  it('PATCH /pages/:id/content 400s when content is not an object (I/O matrix edge case)', async () => {
+    const { token } = await registerUser('e2e-content-invalid');
+
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/pages')
+      .set(bearer(token))
+      .send({ title: 'Invalid content target' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/pages/${created.body.id}/content`)
+      .set(bearer(token))
+      .send({ content: 'not-an-object' })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/pages/${created.body.id}/content`)
+      .set(bearer(token))
+      .send({ content: [1, 2, 3] })
+      .expect(400);
   });
 
   it('GET /pages/:id/descendants-count runs the real recursive CTE and counts across all levels', async () => {

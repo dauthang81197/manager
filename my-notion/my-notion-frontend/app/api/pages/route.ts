@@ -1,6 +1,9 @@
-import { NextResponse } from 'next/server';
 import { getBearerToken } from '@/lib/auth';
-import { fetchBackendJson, unauthorizedProxyResponse } from '@/lib/backend';
+import {
+  fetchBackendJson,
+  proxyJsonResponse,
+  unauthorizedProxyResponse,
+} from '@/lib/backend';
 
 /**
  * Proxies GET /api/v1/pages/tree — the sidebar's full Page tree for the
@@ -14,7 +17,7 @@ export async function GET(request: Request) {
   const { status, body } = await fetchBackendJson('/pages/tree', {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return NextResponse.json(body, { status });
+  return proxyJsonResponse(body, status);
 }
 
 /** Proxies POST /api/v1/pages — create a root or child Page. */
@@ -31,5 +34,5 @@ export async function POST(request: Request) {
     },
     body: requestBody,
   });
-  return NextResponse.json(body, { status });
+  return proxyJsonResponse(body, status);
 }
