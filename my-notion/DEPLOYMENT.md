@@ -140,3 +140,94 @@ Same shape for `frontend`, using `FRONTEND_IMAGE_TAG` instead. Note this only
 lasts until the next `develop` push redeploys `:latest` — for a rollback that
 sticks, edit the compose file's `image:` line (or a persisted `.env` next to
 it) to the SHA instead of relying on a one-off shell var.
+
+## 5. Backup tự động (FR-14)
+
+FR-14 is deliberately **not** part of either app's Docker image or the CI/CD
+pipelines above (architecture spine: "infra cron, ngoài 2 app"). It's a pair
+of plain bash scripts (`my-notion/backup/backup.sh` and
+`my-notion/backup/restore.sh`, in this repo) that you copy to the VPS host
+once and run from cron — not from inside a container.
+
+### What gets backed up, and why together
+
+Every run backs up **both** the Postgres `manager` database (via
+`docker exec postgres_db pg_dump ...`, since Postgres lives in the shared
+`postgres_db` container, outside this project's compose) **and** the host
+directory bind-mounted for uploaded images (`ASSET_STORAGE_DIR`, FR-9), in
+the same invocation. A database-only backup is not enough: the `assets`
+table only stores metadata, so restoring the DB without the image bytes
+brings back every Page with broken images. See
+`my-notion-backend/README.md` → "Image storage & backup (FR-9 / FR-14)".
+
+On the current VPS:
+
+- Postgres container: `postgres_db` (postgres:14), network
+  `database_default`, database `manager`, role `manager_app_1` (the
+  superuser `postgres` is blocked from network/TCP login by `pg_hba.conf`,
+  so the backup role must be `manager_app_1`).
+- Images bind-mount: host `/root/manager/data/assets` ↔ container
+  `/app/var/assets`.
+- Compose directory: `/root/manager` (`backend.env`/`frontend.env` live
+  there, separate from each other).
+
+### One-time setup on the VPS
+
+1. Copy `my-notion/backup/backup.sh` and `my-notion/backup/restore.sh` to
+   e.g. `/root/manager/backup/` on the VPS (`chmod +x` both).
+2. Create `/root/manager/backup/pg_backup.env` from
+   `my-notion/backup/pg_backup.env.example`, filling in the real
+   `manager_app_1` Postgres password:
+
+   ```
+   PGPASSWORD=<real password>
+   ```
+
+   `chmod 600` it. This file is read via `docker exec --env-file`, never
+   passed as a CLI argument — so the password never shows up in `ps` or
+   shell history. **Never commit this file**; only the `.example` is
+   tracked (see `my-notion/.gitignore`).
+3. Pick a backup directory that is **not** `ASSET_STORAGE_DIR` and not
+   Postgres's own data directory, e.g. `/root/manager/backup/data` (both
+   scripts default to this path and refuse to run if it overlaps with
+   `ASSET_STORAGE_DIR`). It only needs to exist on the same VPS for v1 —
+   pushing copies off-VPS (S3/elsewhere) is an accepted v1 risk, not done
+   here.
+4. Add a crontab entry (`crontab -e` as the user that owns
+   `/root/manager`), e.g. daily at 03:00 UTC:
+
+   ```cron
+   0 3 * * * BACKUP_DIR=/root/manager/backup/data ASSET_STORAGE_DIR=/root/manager/data/assets PG_ENV_FILE=/root/manager/backup/pg_backup.env /root/manager/backup/backup.sh >> /root/manager/backup/backup.log 2>&1
+   ```
+
+   All the env vars above (plus `POSTGRES_CONTAINER`, `DB_USER`, `DB_NAME`,
+   `RETENTION_COUNT`) have defaults matching this VPS's real layout baked
+   into the script, so in practice you can omit any you don't need to
+   override.
+
+### Verifying a backup ran correctly
+
+- `tail -n 50 /root/manager/backup/backup.log` — look for the final
+  `Backup complete.` line; any `ERROR:` line means the run failed and (by
+  design) no old backups were deleted.
+- `ls -la /root/manager/backup/data` — expect a `manager-<date>.sql.gz` and
+  an `assets-<date>.tar.gz` for each of the last 7 days, no leftover
+  `.tmp.*` files.
+- `zcat /root/manager/backup/data/manager-<date>.sql.gz | head` — confirms
+  the dump is a readable `pg_dump` SQL text stream, not a truncated/empty
+  file.
+
+### Restoring
+
+`restore.sh` is **never** run automatically — always run it by hand, and
+always name the exact backup date you want (it refuses to guess "latest"):
+
+```bash
+/root/manager/backup/restore.sh 2026-08-02
+```
+
+It prints what it's about to overwrite, asks you to retype the date to
+confirm, then loads the DB dump via `psql` and extracts the assets tar back
+into `ASSET_STORAGE_DIR`. Test this against a scratch database/directory
+(not the live `manager` DB) before you ever need it for real — see
+`spec-6-backup.md` Verification notes.

@@ -4,3 +4,6 @@ dist/
 .env
 .env.local
 *.log
+backup/pg_backup.env
+backup/data/
+backup/*.log

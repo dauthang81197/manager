@@ -78,3 +78,21 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-cicd-deploy-vps.md`
   summary: Frontend Dockerfile bake giá trị placeholder cho `AUTH_SECRET`/`INTERNAL_API_SECRET` ở builder stage chỉ để `next build` không crash lúc "Collecting page data" — chưa xác minh không có trang nào bị static-prerender ra giá trị bắt nguồn từ secret đó.
   evidence: Theo kiến trúc Auth.js v5, mọi route đọc cookie/session sẽ tự động chuyển sang dynamic rendering nên rủi ro rò rỉ vào HTML tĩnh thấp, nhưng chưa chạy `next build` thật + kiểm tra output để xác nhận 100%.
+- source_spec: none
+  summary: FR-10 (đồng bộ tức thời đa thiết bị qua WebSocket push) chưa triển khai — tách khỏi phiên làm FR-14 (backup) để giữ mỗi spec một mục tiêu độc lập.
+  evidence: FR-10 và FR-14 là 2 deliverable độc lập, có thể review/merge riêng biệt (WebSocket Gateway ở backend + client WS ở frontend, không đụng gì tới cron backup); người dùng chọn tách và ưu tiên FR-14 trước vì rủi ro mất dữ liệu cao hơn.
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-backup.md`
+  summary: `backup.sh` không có lockfile/`flock` chống chạy chồng — nếu 1 lần chạy bất thường lâu hơn dự kiến và cron kích hoạt lần tiếp theo, 2 tiến trình có thể đè lên cùng file tạm/cùng ngày.
+  evidence: Rủi ro thấp với lịch chạy daily đơn giản trên VPS cá nhân; cân nhắc thêm `flock` nếu sau này backup DB lớn hơn nhiều, chạy lâu hơn.
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-backup.md`
+  summary: Không có kiểm tra tính toàn vẹn (checksum) cho file backup ngoài việc kiểm tra không rỗng + exit code của `pg_dump`/`tar` — 1 file bị hỏng âm thầm (đĩa lỗi, ghi dở mà vẫn exit 0) có thể lọt qua và bị rotate vào như 1 bản "tốt".
+  evidence: Đủ dùng ở mức cơ bản cho v1; cân nhắc thêm `sha256sum` hoặc `gzip -t`/`tar tzf` để verify sau khi ghi nếu cần độ tin cậy cao hơn.
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-backup.md`
+  summary: Không có cơ chế cảnh báo khi backup thất bại (cron `MAILTO`, webhook...) — chỉ dựa vào việc người vận hành tự `tail backup.log` để phát hiện lỗi.
+  evidence: Chấp nhận được cho v1 cá nhân; nếu backup âm thầm fail nhiều ngày liên tiếp mà không ai check log, sẽ không phát hiện ra cho tới khi cần restore thật.
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-backup.md`
+  summary: Guard chống `BACKUP_DIR`/`ASSET_STORAGE_DIR` lồng nhau trong `backup.sh` so sánh chuỗi đường dẫn trực tiếp, không dùng `realpath` — có thể bị bypass qua symlink hoặc đường dẫn tương đối không chuẩn hoá (vd chứa `..`).
+  evidence: Đủ bắt các trường hợp cấu hình sai thông thường; canonicalize bằng `realpath` là hardening thêm, chưa cấp bách vì người vận hành tự cấu hình 1 lần, không phải input từ bên ngoài.
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-backup.md`
+  summary: Phạm vi backup chỉ gồm DB `manager` + `ASSET_STORAGE_DIR` — chưa bao gồm `docker-compose.yml` thật, file `.env`, cấu hình Nginx Proxy Manager/TLS trên VPS. Mất toàn bộ VPS vẫn cần dựng lại các phần này thủ công, không chỉ chạy `restore.sh` là xong.
+  evidence: Đúng phạm vi FR-14 đã chốt (chỉ DB + ảnh); backup toàn bộ cấu hình VPS là việc khác, lớn hơn nhiều, chưa có trong roadmap.
