@@ -66,3 +66,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-4-image-upload.md`
   summary: `MAX_IMAGE_BYTES` chép tay ở 3 nơi (backend constants, proxy route, editor) mà không có test nào bắt khi chúng lệch nhau.
   evidence: Trùng lặp có chủ đích vì không dùng monorepo tooling (AD-6); nên thêm 1 test canh lệch khi có dịp.
+- source_spec: `_bmad-output/implementation-artifacts/spec-cicd-deploy-vps.md`
+  summary: Cả 2 Dockerfile (backend, frontend) chạy container với user root mặc định, không có non-root USER — kể cả khi backend ghi file upload vào bind-mount host qua `ASSET_STORAGE_DIR`.
+  evidence: VPS cá nhân 1 người dùng tự host, rủi ro thấp ở v1; cân nhắc thêm `USER node` + quyền thư mục phù hợp khi mở rộng hoặc nếu VPS dùng chung với dịch vụ khác.
+- source_spec: `_bmad-output/implementation-artifacts/spec-cicd-deploy-vps.md`
+  summary: Các GitHub Action bên thứ 3 trong 2 workflow deploy (`appleboy/ssh-action`, `docker/build-push-action`, `docker/login-action`, `docker/setup-buildx-action`, `actions/checkout`) đều pin theo tag major (vd `@v6`) chứ không pin theo commit SHA.
+  evidence: Hardening chuỗi cung ứng hợp lý nhưng nặng tay cho 1 project cá nhân; cân nhắc pin SHA nếu sau này có thêm collaborator hoặc lo ngại supply-chain tăng.
+- source_spec: `_bmad-output/implementation-artifacts/spec-cicd-deploy-vps.md`
+  summary: Container frontend (`node server.js`) không fail-fast khi `AUTH_SECRET`/`INTERNAL_API_SECRET` chưa được inject đúng lúc khởi động — lỗi chỉ lộ ra ở request đầu tiên chạm auth (`lib/auth.ts` throw), khác với backend (fail fast qua `prisma migrate deploy`).
+  evidence: Cần một entrypoint script nhỏ kiểm tra env bắt buộc trước khi `node server.js`; chưa cấp bách vì `env_file` trên VPS đã được tài liệu hoá rõ trong DEPLOYMENT.md.
+- source_spec: `_bmad-output/implementation-artifacts/spec-cicd-deploy-vps.md`
+  summary: Frontend Dockerfile bake giá trị placeholder cho `AUTH_SECRET`/`INTERNAL_API_SECRET` ở builder stage chỉ để `next build` không crash lúc "Collecting page data" — chưa xác minh không có trang nào bị static-prerender ra giá trị bắt nguồn từ secret đó.
+  evidence: Theo kiến trúc Auth.js v5, mọi route đọc cookie/session sẽ tự động chuyển sang dynamic rendering nên rủi ro rò rỉ vào HTML tĩnh thấp, nhưng chưa chạy `next build` thật + kiểm tra output để xác nhận 100%.

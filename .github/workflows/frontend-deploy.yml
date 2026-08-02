@@ -1,0 +1,83 @@
+name: Frontend Deploy
+
+# Spine AD-6: build & deploy a Docker image for my-notion-frontend only when
+# that folder changes, on `develop`. Never bump `test`/`lint` gates in here
+# (out of scope per spec-cicd-deploy-vps.md "Never").
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'my-notion/my-notion-frontend/**'
+
+permissions:
+  contents: read
+  packages: write
+
+# Two rapid pushes touching my-notion-frontend/** must not deploy out of
+# order — let an in-flight deploy finish rather than cancelling it mid-way
+# (cancel-in-progress: false), so a live `docker compose up -d` is never
+# killed partway through.
+concurrency:
+  group: frontend-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/my-notion-frontend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GHCR image refs must be lowercase; github.repository_owner can be
+      # mixed-case (it mirrors the GitHub username/org as typed).
+      - name: Compute lowercase image name
+        id: image
+        run: |
+          echo "name=$(printf '%s' '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: my-notion/my-notion-frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # First-ever push: the GHCR package defaults to *private* even on a
+      # public repo, so `docker compose pull` below 403s until it's flipped to
+      # public in the package's GitHub settings — see my-notion/DEPLOYMENT.md.
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        timeout-minutes: 5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}" || exit 1
+            docker compose pull frontend
+            docker compose up -d frontend
+            # `up -d` returns 0 the instant the container is *created*, not
+            # once it's actually healthy — give it a moment, then confirm it
+            # is still running (not crash-looping on e.g. a missing env var)
+            # before letting the job report success.
+            sleep 5
+            docker compose ps --status running frontend | grep -q frontend || { docker compose logs --tail=50 frontend; exit 1; }
